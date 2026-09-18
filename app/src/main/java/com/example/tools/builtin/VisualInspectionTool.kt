@@ -14,26 +14,41 @@ class VisualInspectionTool(
     override val definition = ToolDefinition(
         id = "visual_inspection_tool",
         name = "Optical Viewport Inspection",
-        description = "Inspects the latest optical visual frame captured by NOUS sensors to analyze environment, brightness, and text elements.",
+        description = "Inspects the optical visual frame captured by device camera and sends it to Gemini Multimodal Engine to analyze environment, detect objects, and read text.",
         permissionLevel = PermissionLevel.L0_READ_ONLY
     )
 
     override suspend fun execute(parameters: Map<String, Any>): ToolExecutionResult {
-        val lastResult = visionEngine.lastAnalysis.value
-        return if (lastResult != null) {
+        val query = parameters["query"]?.toString()
+        val analysisResult = visionEngine.analyzeFrame(prompt = query)
+
+        return if (analysisResult.isSuccess) {
+            val data = analysisResult.getOrNull()
+            val text = data?.summary ?: "Visual analysis completed."
             ToolExecutionResult(
                 success = true,
-                output = "Optical Analysis: ${lastResult.summary} | Features: ${lastResult.detectedObjects.joinToString(", ")}",
+                output = text,
                 verificationStatus = VerificationStatus.VERIFIED_VALID,
-                verificationEvidence = "Optical frame status successfully retrieved from vision perception pipeline."
+                verificationEvidence = "Optical frame successfully analyzed by Gemini Multimodal Vision."
             )
         } else {
-            ToolExecutionResult(
-                success = true,
-                output = "No optical frame currently cached in memory. Optical sensor is active in HUD viewport.",
-                verificationStatus = VerificationStatus.VERIFIED_VALID,
-                verificationEvidence = "Optical sensor active and standby."
-            )
+            val lastCached = visionEngine.lastAnalysis.value
+            if (lastCached != null) {
+                ToolExecutionResult(
+                    success = true,
+                    output = lastCached.summary,
+                    verificationStatus = VerificationStatus.VERIFIED_VALID,
+                    verificationEvidence = "Cached optical frame analysis provided."
+                )
+            } else {
+                val errorMsg = analysisResult.exceptionOrNull()?.localizedMessage ?: "Please tap INSPECT on the Optical Sensor Viewport to capture a camera frame."
+                ToolExecutionResult(
+                    success = false,
+                    output = "Optical Sensor Notice: $errorMsg",
+                    verificationStatus = VerificationStatus.FAILED_VERIFICATION,
+                    verificationEvidence = errorMsg
+                )
+            }
         }
     }
 

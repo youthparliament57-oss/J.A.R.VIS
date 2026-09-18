@@ -22,43 +22,78 @@ class LocalVisionEngine(
     private val _lastAnalysis = MutableStateFlow<VisionAnalysisResult?>(null)
     override val lastAnalysis: StateFlow<VisionAnalysisResult?> = _lastAnalysis.asStateFlow()
 
-    override suspend fun analyzeFrame(bitmap: Bitmap, prompt: String?): Result<VisionAnalysisResult> = withContext(Dispatchers.Default) {
+    private val _lastCapturedFrame = MutableStateFlow<Bitmap?>(null)
+    override val lastCapturedFrame: StateFlow<Bitmap?> = _lastCapturedFrame.asStateFlow()
+
+    override fun updateCurrentFrame(bitmap: Bitmap) {
+        _lastCapturedFrame.value = bitmap
+    }
+
+    override suspend fun analyzeFrame(bitmap: Bitmap?, prompt: String?): Result<VisionAnalysisResult> = withContext(Dispatchers.Default) {
+        val targetBitmap = bitmap ?: _lastCapturedFrame.value
+        if (targetBitmap == null) {
+            val errorMsg = "No camera frame available. Please point camera and tap INSPECT."
+            eventBus.emit(NousSystemEvent.LogEmitted(
+                tag = "VISION-WARN",
+                message = errorMsg,
+                level = "WARN"
+            ))
+            return@withContext Result.failure(IllegalStateException(errorMsg))
+        }
+
+        // Cache latest frame
+        _lastCapturedFrame.value = targetBitmap
         _isAnalyzing.value = true
         val startTime = System.currentTimeMillis()
 
         try {
             eventBus.emit(NousSystemEvent.LogEmitted(
                 tag = "VISION",
-                message = "Sampling optical frame ${bitmap.width}x${bitmap.height}..."
+                message = "Routing optical frame (${targetBitmap.width}x${targetBitmap.height}) to Gemini Multimodal Engine..."
             ))
 
-            // If prompt is specified or Gemini Neural Engine is available, run Multimodal Gemini Vision
-            if (geminiNeuralEngine != null && !prompt.isNullOrBlank()) {
-                val visionPrompt = "Analyze this camera frame in detail. $prompt"
+            // Multimodal Gemini Vision
+            if (geminiNeuralEngine != null) {
+                val effectivePrompt = if (!prompt.isNullOrBlank()) {
+                    "Observe this camera frame carefully and respond to the user directive: $prompt"
+                } else {
+                    "Look at this image captured from the user's camera. Identify key objects, read any text, explain what is in front of the camera, and describe the scene clearly."
+                }
+
                 val geminiResult = geminiNeuralEngine.queryIntelligence(
-                    prompt = visionPrompt,
-                    systemInstruction = "You are NOUS Vision Engine. Identify objects, read any visible text, detect spatial anomalies, and describe the environment concisely.",
-                    imageBitmap = bitmap
+                    prompt = effectivePrompt,
+                    systemInstruction = "You are NOUS Vision Engine, an advanced autonomous Jarvis visual intelligence. Provide a clear, sharp, informative description of what you observe.",
+                    imageBitmap = targetBitmap
                 )
 
                 if (geminiResult.isSuccess) {
-                    val analysisText = geminiResult.getOrNull() ?: "Visual field inspected."
+                    val analysisText = geminiResult.getOrNull() ?: "Visual inspection complete."
                     val latency = System.currentTimeMillis() - startTime
                     val result = VisionAnalysisResult(
                         summary = analysisText,
-                        detectedObjects = listOf("Multimodal Neural Scan", "Environment Objects"),
+                        detectedObjects = listOf("Gemini Multimodal Analysis", "Live Scene Detected"),
                         extractedText = null,
                         visualRiskAssessment = "L0_SAFE",
                         latencyMs = latency
                     )
                     _lastAnalysis.value = result
+                    eventBus.emit(NousSystemEvent.LogEmitted(
+                        tag = "VISION-OK",
+                        message = "Gemini multimodal vision analysis finished (${latency}ms)"
+                    ))
                     return@withContext Result.success(result)
+                } else {
+                    val exMsg = geminiResult.exceptionOrNull()?.localizedMessage ?: "Gemini vision failed"
+                    eventBus.emit(NousSystemEvent.LogEmitted(
+                        tag = "VISION-WARN",
+                        message = "Gemini API vision call failed ($exMsg). Falling back to edge detection."
+                    ))
                 }
             }
 
             // High-speed Deterministic Optical Fallback
-            val width = bitmap.width
-            val height = bitmap.height
+            val width = targetBitmap.width
+            val height = targetBitmap.height
             val step = maxOf(1, width / 20)
             var totalLuminance = 0L
             var sampleCount = 0
@@ -67,7 +102,7 @@ class LocalVisionEngine(
             var prevLum = -1
             for (y in 0 until height step step) {
                 for (x in 0 until width step step) {
-                    val pixel = bitmap.getPixel(x, y)
+                    val pixel = targetBitmap.getPixel(x, y)
                     val r = Color.red(pixel)
                     val g = Color.green(pixel)
                     val b = Color.blue(pixel)

@@ -2,6 +2,7 @@ package com.example.ui.hud
 
 import android.graphics.Bitmap
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
@@ -23,12 +24,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CameraAlt
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -49,11 +48,9 @@ import com.example.perception.vision.VisionAnalysisResult
 import com.example.ui.theme.NousCyanGlow
 import com.example.ui.theme.NousCyanNeon
 import com.example.ui.theme.NousObsidianDark
-import com.example.ui.theme.NousRedAlert
 import com.example.ui.theme.NousSurfaceDark
 import com.example.ui.theme.NousSurfaceVariant
 import com.example.ui.theme.NousTextPrimary
-import com.example.ui.theme.NousTextSecondary
 import java.util.concurrent.Executors
 
 @Composable
@@ -70,6 +67,29 @@ fun OpticalViewportCard(
     val cameraController = remember {
         LifecycleCameraController(context).apply {
             cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+            setImageAnalysisAnalyzer(
+                cameraExecutor,
+                object : ImageAnalysis.Analyzer {
+                    private var lastSampleTime = 0L
+
+                    override fun analyze(imageProxy: ImageProxy) {
+                        val currentTime = System.currentTimeMillis()
+                        // Sample frame every 2.5 seconds to continuously feed the perception engine
+                        if (currentTime - lastSampleTime > 2500) {
+                            lastSampleTime = currentTime
+                            try {
+                                val bitmap = imageProxy.toBitmap()
+                                ContextCompat.getMainExecutor(context).execute {
+                                    onFrameCaptured(bitmap)
+                                }
+                            } catch (e: Exception) {
+                                // Handled safely
+                            }
+                        }
+                        imageProxy.close()
+                    }
+                }
+            )
             bindToLifecycle(lifecycleOwner)
         }
     }
@@ -115,7 +135,7 @@ fun OpticalViewportCard(
             }
 
             Text(
-                text = if (isAnalyzing) "ANALYZING..." else "STANDBY",
+                text = if (isAnalyzing) "ANALYZING..." else "OPTICAL SENSORS ACTIVE",
                 color = if (isAnalyzing) com.example.ui.theme.NousAmberWarning else NousCyanGlow,
                 fontSize = 10.sp,
                 fontFamily = FontFamily.Monospace,
@@ -153,7 +173,7 @@ fun OpticalViewportCard(
                     .align(Alignment.Center)
             )
 
-            // Tap to capture & analyze button
+            // Tap to capture & analyze immediately button
             Button(
                 onClick = {
                     cameraController.takePicture(

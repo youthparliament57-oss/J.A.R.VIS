@@ -20,7 +20,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -47,7 +46,6 @@ import com.example.ui.theme.NousCyanGlow
 import com.example.ui.theme.NousCyanNeon
 import com.example.ui.theme.NousObsidianDark
 import com.example.ui.theme.NousSurfaceDark
-import com.example.ui.theme.NousTextPrimary
 import com.example.ui.theme.NousTextSecondary
 
 @Composable
@@ -64,6 +62,7 @@ fun NousHudScreen(
     val activePlan by orchestrator.activePlan.collectAsState()
     val pendingApproval by orchestrator.pendingApproval.collectAsState()
     val terminalLogs by orchestrator.terminalLogs.collectAsState()
+    val cognitiveResponse by orchestrator.lastCognitiveResponse.collectAsState()
 
     val voiceStatus by voiceEngine.engineStatus.collectAsState()
     val isSpeaking by voiceEngine.isTtsActive.collectAsState()
@@ -171,6 +170,12 @@ fun NousHudScreen(
                 StatusOrbRing(
                     agentState = agentState,
                     modifier = Modifier.padding(vertical = 4.dp)
+                )
+
+                // Prominently Visible Cognitive Response Card
+                NeuralResponseCard(
+                    responseText = cognitiveResponse,
+                    isSpeaking = isSpeaking
                 )
 
                 // Optical Sensor Viewport (CameraX + Analysis)

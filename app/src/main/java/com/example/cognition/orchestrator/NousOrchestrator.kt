@@ -27,6 +27,7 @@ interface NousOrchestrator {
     val activePlan: StateFlow<ExecutionPlan?>
     val pendingApproval: StateFlow<ApprovalRequest?>
     val terminalLogs: StateFlow<List<String>>
+    val lastCognitiveResponse: StateFlow<String?>
 
     fun submitGoal(userGoal: String)
     fun approveRequest(requestId: String)
@@ -56,87 +57,92 @@ class NousOrchestratorImpl(
     private val _pendingApproval = MutableStateFlow<ApprovalRequest?>(null)
     override val pendingApproval: StateFlow<ApprovalRequest?> = _pendingApproval.asStateFlow()
 
+    private val _lastCognitiveResponse = MutableStateFlow<String?>(null)
+    override val lastCognitiveResponse: StateFlow<String?> = _lastCognitiveResponse.asStateFlow()
+
     private val _terminalLogs = MutableStateFlow<List<String>>(
         listOf(
-            "[SYSTEM KERNEL] NOUS Master Intelligence initialized.",
-            "[GATEWAY] Tool sandbox active. Security policy: L0-L4 hierarchy.",
-            "[READY] Standing by for telemetry and voice/text commands."
+            "[SYSTEM] NOUS Multimodal Architecture online.",
+            "[PERCEPTION] Speech recognizer & Vision sensor initialized.",
+            "[COGNITION] Gemini Neural Engine armed and standing by."
         )
     )
     override val terminalLogs: StateFlow<List<String>> = _terminalLogs.asStateFlow()
 
-    init {
-        // Collect event bus messages for terminal telemetry
-        scope.launch {
-            eventBus.events.collect { event ->
-                when (event) {
-                    is NousSystemEvent.LogEmitted -> appendLog("[${event.level}] ${event.tag}: ${event.message}")
-                    is NousSystemEvent.StateChanged -> appendLog("[STATE] ${event.oldState.name} -> ${event.newState.name}")
-                    is NousSystemEvent.ToolExecuted -> appendLog("[TOOL] Executed '${event.toolId}' in ${event.executionTimeMs}ms (Success: ${event.success})")
-                    is NousSystemEvent.SecurityAlert -> appendLog("[SECURITY] ${event.message}")
-                }
-            }
-        }
-    }
-
     override fun submitGoal(userGoal: String) {
-        if (userGoal.isBlank()) return
+        val trimmed = userGoal.trim()
+        if (trimmed.isEmpty()) return
 
         activeExecutionJob?.cancel()
+        _pendingApproval.value = null
+        _lastCognitiveResponse.value = null
+
         activeExecutionJob = scope.launch {
-            appendLog("[GOAL] Received user intent: \"$userGoal\"")
-            updateState(AgentState.PLANNING)
+            try {
+                updateState(AgentState.PLANNING)
+                appendLog("[DIRECTIVE] User: \"$trimmed\"")
 
-            val plan = plannerAgent.createPlan(userGoal)
-            _activePlan.value = plan
-            appendLog("[PLANNER] Synthesized plan with ${plan.steps.size} executable step(s).")
+                // Step 1: Cognition & Multi-Agent Planning
+                val plan = plannerAgent.createPlan(trimmed)
+                _activePlan.value = plan
+                appendLog("[PLAN] Generated execution plan with ${plan.steps.size} step(s)")
 
-            executeCurrentPlan()
+                // Step 2: Autonomous Execution Loop
+                updateState(AgentState.EXECUTING)
+                executeCurrentPlan()
+            } catch (e: Exception) {
+                updateState(AgentState.ERROR)
+                appendLog("[ERROR] Planning/Execution fault: ${e.localizedMessage}")
+                voiceEngine?.speak("Execution encountered a fault: ${e.localizedMessage}")
+            }
         }
     }
 
     private suspend fun executeCurrentPlan() {
         val currentPlan = _activePlan.value ?: return
-        updateState(AgentState.EXECUTING)
-
         val updatedSteps = currentPlan.steps.toMutableList()
         var allSucceeded = true
 
         for (index in updatedSteps.indices) {
             val step = updatedSteps[index]
-            appendLog("[EXEC] Step ${index + 1}/${updatedSteps.size}: \"${step.description}\"")
+            if (step.status is StepStatus.Success || step.status is StepStatus.Skipped) {
+                continue
+            }
 
-            // Mark step InProgress
+            // Mark InProgress and execute tool via ToolExecutor (which handles SecurityGatekeeper)
             updatedSteps[index] = step.copy(status = StepStatus.InProgress)
             _activePlan.value = currentPlan.copy(steps = updatedSteps)
+            appendLog("[EXEC] Running step ${index + 1}: ${step.description}")
 
-            // Invoke Tool
-            val invocation = toolExecutor.executeTool(
+            val invocationResult = toolExecutor.executeTool(
                 stepId = step.stepId,
                 toolId = step.toolId,
                 parameters = step.inputParameters
             )
 
-            when (invocation) {
+            when (invocationResult) {
                 is ToolInvocationResult.AwaitingApproval -> {
-                    updateState(AgentState.AWAITING_USER_APPROVAL)
-                    _pendingApproval.value = invocation.request
+                    // Step requires explicit human authorization
+                    _pendingApproval.value = invocationResult.request
                     updatedSteps[index] = step.copy(status = StepStatus.WaitingApproval)
                     _activePlan.value = currentPlan.copy(steps = updatedSteps)
-                    appendLog("[INTERLOCK] Execution paused at step ${index + 1}. Awaiting explicit user confirmation.")
-                    return // Wait for approval callback
+                    appendLog("[INTERLOCK] Awaiting human approval for '${step.toolId}' (Risk: ${invocationResult.request.permissionLevel})")
+                    return
                 }
                 is ToolInvocationResult.Blocked -> {
                     allSucceeded = false
-                    val err = "Blocked by Security: ${invocation.reason}"
-                    updatedSteps[index] = step.copy(status = StepStatus.Failure(err), errorMessage = err)
+                    val errorMsg = "Execution blocked: ${invocationResult.reason}"
+                    updatedSteps[index] = step.copy(
+                        status = StepStatus.Failure(errorMsg),
+                        errorMessage = errorMsg
+                    )
                     _activePlan.value = currentPlan.copy(steps = updatedSteps)
-                    appendLog("[ERROR] Step ${index + 1} blocked: ${invocation.reason}")
+                    appendLog("[SECURITY] Step ${index + 1} blocked: $errorMsg")
                     updateState(AgentState.ERROR)
                     break
                 }
                 is ToolInvocationResult.Completed -> {
-                    val result = invocation.result
+                    val result = invocationResult.result
                     if (result.success && result.verificationStatus == VerificationStatus.VERIFIED_VALID) {
                         updatedSteps[index] = step.copy(
                             status = StepStatus.Success(result.output),
@@ -144,7 +150,8 @@ class NousOrchestratorImpl(
                             verificationEvidence = result.verificationEvidence
                         )
                         _activePlan.value = currentPlan.copy(steps = updatedSteps)
-                        appendLog("[VERIFIED] Step ${index + 1} confirmed: ${result.verificationEvidence ?: "OK"}")
+                        _lastCognitiveResponse.value = result.output
+                        appendLog("[VERIFIED] Step ${index + 1} output: ${result.output.take(120)}")
                     } else {
                         allSucceeded = false
                         val errorMsg = result.error ?: "Post-condition verification failed"
@@ -154,6 +161,7 @@ class NousOrchestratorImpl(
                             errorMessage = errorMsg
                         )
                         _activePlan.value = currentPlan.copy(steps = updatedSteps)
+                        _lastCognitiveResponse.value = result.output.ifBlank { errorMsg }
                         appendLog("[FAIL] Step ${index + 1} failed verification: $errorMsg")
                         updateState(AgentState.ERROR)
                         break
@@ -170,7 +178,7 @@ class NousOrchestratorImpl(
             val spokenSummary = when {
                 updatedSteps.size == 1 && updatedSteps.first().outputResult != null -> {
                     val out = updatedSteps.first().outputResult ?: ""
-                    if (out.length > 120) out.take(120) + "..." else out
+                    if (out.length > 200) out.take(200) + "..." else out
                 }
                 else -> "Directive executed successfully across ${updatedSteps.size} operational steps."
             }

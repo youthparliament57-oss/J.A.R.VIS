@@ -14,6 +14,8 @@ data class VisionAnalysisResult(
 interface VisionPerceptionEngine {
     val isAnalyzing: StateFlow<Boolean>
     val lastAnalysis: StateFlow<VisionAnalysisResult?>
+    val lastCapturedFrame: StateFlow<Bitmap?>
 
-    suspend fun analyzeFrame(bitmap: Bitmap, prompt: String? = null): Result<VisionAnalysisResult>
+    fun updateCurrentFrame(bitmap: Bitmap)
+    suspend fun analyzeFrame(bitmap: Bitmap? = null, prompt: String? = null): Result<VisionAnalysisResult>
 }
