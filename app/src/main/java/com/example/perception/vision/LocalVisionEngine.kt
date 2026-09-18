@@ -2,6 +2,7 @@ package com.example.perception.vision
 
 import android.graphics.Bitmap
 import android.graphics.Color
+import com.example.cognition.llm.GeminiNeuralEngine
 import com.example.core.event.EventBus
 import com.example.core.event.NousSystemEvent
 import kotlinx.coroutines.Dispatchers
@@ -11,7 +12,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 
 class LocalVisionEngine(
-    private val eventBus: EventBus
+    private val eventBus: EventBus,
+    private val geminiNeuralEngine: GeminiNeuralEngine? = null
 ) : VisionPerceptionEngine {
 
     private val _isAnalyzing = MutableStateFlow(false)
@@ -30,7 +32,31 @@ class LocalVisionEngine(
                 message = "Sampling optical frame ${bitmap.width}x${bitmap.height}..."
             ))
 
-            // Deterministic Fast Optical Analysis
+            // If prompt is specified or Gemini Neural Engine is available, run Multimodal Gemini Vision
+            if (geminiNeuralEngine != null && !prompt.isNullOrBlank()) {
+                val visionPrompt = "Analyze this camera frame in detail. $prompt"
+                val geminiResult = geminiNeuralEngine.queryIntelligence(
+                    prompt = visionPrompt,
+                    systemInstruction = "You are NOUS Vision Engine. Identify objects, read any visible text, detect spatial anomalies, and describe the environment concisely.",
+                    imageBitmap = bitmap
+                )
+
+                if (geminiResult.isSuccess) {
+                    val analysisText = geminiResult.getOrNull() ?: "Visual field inspected."
+                    val latency = System.currentTimeMillis() - startTime
+                    val result = VisionAnalysisResult(
+                        summary = analysisText,
+                        detectedObjects = listOf("Multimodal Neural Scan", "Environment Objects"),
+                        extractedText = null,
+                        visualRiskAssessment = "L0_SAFE",
+                        latencyMs = latency
+                    )
+                    _lastAnalysis.value = result
+                    return@withContext Result.success(result)
+                }
+            }
+
+            // High-speed Deterministic Optical Fallback
             val width = bitmap.width
             val height = bitmap.height
             val step = maxOf(1, width / 20)

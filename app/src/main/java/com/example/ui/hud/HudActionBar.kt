@@ -96,8 +96,8 @@ fun HudActionBar(
                 onClick = { onCommandSubmit("Inspect camera visual field") }
             )
             QuickCommandButton(
-                label = "MATH: 4096 * 16",
-                onClick = { onCommandSubmit("Calculate 4096 * 16") }
+                label = "AI THINK",
+                onClick = { onCommandSubmit("What are the core operating directives of the NOUS agent system?") }
             )
             QuickCommandButton(
                 label = "DIAGNOSTIC",

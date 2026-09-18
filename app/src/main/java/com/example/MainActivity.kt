@@ -15,9 +15,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import com.example.cognition.llm.GeminiNeuralEngine
 import com.example.cognition.orchestrator.NousOrchestrator
 import com.example.cognition.orchestrator.NousOrchestratorImpl
 import com.example.cognition.planner.RuleBasedPlanner
+import com.example.core.config.ApiKeyPreferences
 import com.example.core.event.EventBus
 import com.example.memory.database.NousDatabase
 import com.example.memory.repository.MemoryRepository
@@ -29,6 +31,7 @@ import com.example.perception.voice.VoicePerceptionEngine
 import com.example.security.gatekeeper.SecurityGatekeeperImpl
 import com.example.tools.builtin.CalculatorMathTool
 import com.example.tools.builtin.DeviceStatusTool
+import com.example.tools.builtin.GeminiCognitionTool
 import com.example.tools.builtin.NotesMemoryTool
 import com.example.tools.builtin.SystemFlashlightTool
 import com.example.tools.builtin.VisualInspectionTool
@@ -40,6 +43,8 @@ import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
+    private lateinit var apiKeyPreferences: ApiKeyPreferences
+    private lateinit var geminiNeuralEngine: GeminiNeuralEngine
     private lateinit var voiceEngine: VoicePerceptionEngine
     private lateinit var visionEngine: VisionPerceptionEngine
 
@@ -52,26 +57,38 @@ class MainActivity : ComponentActivity() {
         val memoryRepository: MemoryRepository = MemoryRepositoryImpl(database)
         val eventBus = EventBus()
 
-        // 2. Perceptual Engines (Voice & Vision)
+        // 2. Persistent API Configuration & Gemini Neural Engine
+        apiKeyPreferences = ApiKeyPreferences(applicationContext)
+        geminiNeuralEngine = GeminiNeuralEngine(
+            apiKeyPreferences = apiKeyPreferences,
+            eventBus = eventBus
+        )
+
+        // 3. Perceptual Engines (Voice & Vision with Gemini Multimodal/Neural Voice)
         voiceEngine = AndroidVoicePerceptionEngine(
             context = applicationContext,
             eventBus = eventBus,
-            coroutineScope = lifecycleScope
+            coroutineScope = lifecycleScope,
+            geminiNeuralEngine = geminiNeuralEngine
         )
-        visionEngine = LocalVisionEngine(eventBus = eventBus)
+        visionEngine = LocalVisionEngine(
+            eventBus = eventBus,
+            geminiNeuralEngine = geminiNeuralEngine
+        )
 
-        // 3. Security Gatekeeper & Tool Registry
+        // 4. Security Gatekeeper & Tool Registry
         val securityGatekeeper = SecurityGatekeeperImpl()
         val toolRegistry = ToolRegistryImpl()
 
-        // Register Built-in Deterministic Tools
+        // Register Built-in Tools & Gemini Neural Tool
         toolRegistry.registerTool(DeviceStatusTool(applicationContext))
         toolRegistry.registerTool(CalculatorMathTool())
         toolRegistry.registerTool(SystemFlashlightTool(applicationContext))
         toolRegistry.registerTool(NotesMemoryTool(memoryRepository))
         toolRegistry.registerTool(VisualInspectionTool(visionEngine))
+        toolRegistry.registerTool(GeminiCognitionTool(geminiNeuralEngine))
 
-        // 4. Tool Executor & Multi-Agent Planner
+        // 5. Tool Executor & Planner
         val toolExecutor = ToolExecutorImpl(
             toolRegistry = toolRegistry,
             securityGatekeeper = securityGatekeeper,
@@ -79,7 +96,7 @@ class MainActivity : ComponentActivity() {
         )
         val plannerAgent = RuleBasedPlanner(toolRegistry)
 
-        // 5. Central Orchestrator
+        // 6. Central Orchestrator
         val orchestrator: NousOrchestrator = NousOrchestratorImpl(
             plannerAgent = plannerAgent,
             toolExecutor = toolExecutor,
@@ -114,6 +131,7 @@ class MainActivity : ComponentActivity() {
                     factsState = facts,
                     voiceEngine = voiceEngine,
                     visionEngine = visionEngine,
+                    apiKeyPreferences = apiKeyPreferences,
                     onFrameCaptured = { bitmap ->
                         lifecycleScope.launch {
                             visionEngine.analyzeFrame(bitmap)

@@ -11,6 +11,16 @@
     @com.squareup.moshi.Json *;
 }
 -keep class com.squareup.moshi.** { *; }
+-keep class com.example.cognition.llm.** { *; }
+
+# Retrofit & OkHttp
+-dontwarn retrofit2.**
+-keep class retrofit2.** { *; }
+-keepattributes Signature
+-keepattributes *Annotation*
+-keepclassmembers,allowobfuscation interface * {
+    @retrofit2.http.* <methods>;
+}
 
 # Keep CameraX internal implementations
 -keep class androidx.camera.** { *; }

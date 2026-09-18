@@ -134,14 +134,14 @@ class RuleBasedPlanner(private val toolRegistry: ToolRegistry) : PlannerAgent {
                 )
             }
 
-            // Fallback: general query
+            // Fallback: general query / conversational / knowledge inquiry -> Gemini Neural LLM
             else -> {
                 steps.add(
                     PlanStep(
                         stepId = UUID.randomUUID().toString(),
-                        description = "Inspect system telemetry to answer general inquiry",
-                        toolId = "device_status",
-                        inputParameters = emptyMap(),
+                        description = "Reason and formulate cognitive response via Gemini Neural Intelligence",
+                        toolId = "gemini_cognition_tool",
+                        inputParameters = mapOf("query" to userGoal),
                         status = StepStatus.Pending
                     )
                 )
